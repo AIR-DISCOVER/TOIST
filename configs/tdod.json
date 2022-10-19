@@ -1,0 +1,12 @@
+{
+    "combine_datasets": ["tdod_1", "tdod_2", "tdod_3", "tdod_4", "tdod_5", "tdod_6", "tdod_7",
+                        "tdod_8", "tdod_9", "tdod_10", "tdod_11", "tdod_12", "tdod_13", "tdod_14"],
+    "combine_datasets_val": ["tdod_1", "tdod_2", "tdod_3", "tdod_4", "tdod_5", "tdod_6", "tdod_7",
+                        "tdod_8", "tdod_9", "tdod_10", "tdod_11", "tdod_12", "tdod_13", "tdod_14"],
+    "refexp_dataset_name": "tdod",
+    "coco_path": "/path/to/coco_tasks",
+    "refexp_ann_path": "/path/to/coco-tasks/annotations/",
+    "catid2name_path": "/path/to/id2name.json",
+    "epochs": 60,
+    "lr_drop": 7
+}
