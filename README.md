@@ -23,7 +23,7 @@ coming soon...
 This repository is a PyTorch implementation.
 
 ## Datasets
-Please follow the instructions in [the official website](https://github.com/coco-tasks/dataset) to download the COCO-Tasks dataset.
+Please follow the instructions in [the official website of COCO-Tasks](https://github.com/coco-tasks/dataset) to download the dataset.
 
 You can organize the 'data' folder as follows:
 ```
