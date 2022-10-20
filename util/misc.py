@@ -164,13 +164,6 @@ def collate_fn_visualize(do_round, batch):
         assert cur_count == len(batched_pos_map)
         # assert batched_pos_map.sum().item() == sum([v["positive_map"].sum().item() for v in batch[1]])
         final_batch["positive_map_eval"] = batched_pos_map.float()
-    if "answer" in batch[1][0] or "answer_type" in batch[1][0]:
-        answers = {}
-        for f in batch[1][0].keys():
-            if "answer" not in f:
-                continue
-            answers[f] = torch.stack([b[f] for b in batch[1]])
-        final_batch["answers"] = answers
 
     return final_batch
 

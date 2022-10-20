@@ -4,5 +4,6 @@ CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --master_port=23456 --
 --num_workers 5 \
 --resume /path/to/checkpoint  \
 --ema --eval \
---mask_model smallconv \
---no_contrastive_align_loss
+--output-dir 'logs/test' \
+--no_contrastive_align_loss \
+--verb_noun_input

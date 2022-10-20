@@ -484,9 +484,6 @@ class SetCriterion(nn.Module):
         self.eos_coef = eos_coef
         self.losses = losses
         self.temperature = temperature
-        empty_weight = torch.ones(self.num_classes + 1)
-        empty_weight[-1] = self.eos_coef
-        self.register_buffer("empty_weight", empty_weight)
 
     def loss_labels(self, memory_cache, outputs, targets, positive_map, indices, num_boxes, **kwargs):
         """Classification loss (NLL)
@@ -1074,7 +1071,7 @@ def build(args):
         weight_dict["loss_nsthl2"] = args.nsthl2_coef
     if args.softkd_loss:
         weight_dict["loss_softkd"] = args.softkd_coef
-    if args.cluster:
+    if args.cluster and args.distillation:
         weight_dict["loss_cluster_choice"] = args.cluster_choice_loss
         weight_dict["loss_cluster_feature"] = args.cluster_feature_loss
 
@@ -1083,21 +1080,27 @@ def build(args):
         weight_dict["loss_mask"] = args.mask_loss_coef
         weight_dict["loss_dice"] = args.dice_loss_coef
 
-    cross_loss_list = ["loss_nsthl2", "loss_softkd", "loss_cluster_choice", "loss_cluster_feature"]
-    prefix_weight_dict = {}
-    for k,v in weight_dict.items():
-        if k in cross_loss_list:
-            prefix_weight_dict[k] = v
-        else:
-            prefix_weight_dict["noun_"+k] = v
-            prefix_weight_dict["sth_"+k] = v
+    if args.distillation:
+        cross_loss_list = ["loss_nsthl2", "loss_softkd", "loss_cluster_choice", "loss_cluster_feature"]
+        prefix_weight_dict = {}
+        for k,v in weight_dict.items():
+            if k in cross_loss_list:
+                prefix_weight_dict[k] = v
+            else:
+                prefix_weight_dict["noun_"+k] = v
+                prefix_weight_dict["sth_"+k] = v
 
-    # TODO this is a hack
-    if args.aux_loss:
-        aux_weight_dict = {}
-        for i in range(args.dec_layers - 1):
-            aux_weight_dict.update({k + f"_{i}": v for k, v in prefix_weight_dict.items()})
-        prefix_weight_dict.update(aux_weight_dict)
+        if args.aux_loss:
+            aux_weight_dict = {}
+            for i in range(args.dec_layers - 1):
+                aux_weight_dict.update({k + f"_{i}": v for k, v in prefix_weight_dict.items()})
+            prefix_weight_dict.update(aux_weight_dict)
+    else:
+        if args.aux_loss:
+            aux_weight_dict = {}
+            for i in range(args.dec_layers - 1):
+                aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
+            weight_dict.update(aux_weight_dict)
 
     losses = ["labels", "boxes", "cardinality"]
     if args.masks:
@@ -1121,16 +1124,18 @@ def build(args):
     )
     criterion.to(device)
 
-    if args.distillation:
-        if args.cluster:
-            cluster_criterion = ClusterCriterion(
-                feature_dim=args.hidden_dim, 
-                memory_size=args.cluster_memory_size, 
-                cluster_num=args.cluster_num, 
-                task_count=14,
-                args=args,
-            )
-        else:
-            cluster_criterion = None
+    if args.cluster:
+        cluster_criterion = ClusterCriterion(
+            feature_dim=args.hidden_dim, 
+            memory_size=args.cluster_memory_size, 
+            cluster_num=args.cluster_num, 
+            task_count=14,
+            args=args,
+        )
+    else:
+        cluster_criterion = None
 
-    return model, criterion, cluster_criterion, prefix_weight_dict
+    if args.distillation:
+        return model, criterion, cluster_criterion, prefix_weight_dict
+    else:
+        return model, criterion, cluster_criterion, weight_dict

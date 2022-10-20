@@ -250,6 +250,8 @@ def get_args_parser():
     parser.add_argument("--cluster_num", default=3, type=int) # 2
 
     parser.add_argument("--distillation", action="store_true")
+
+    parser.add_argument("--verb_noun_input", action="store_true")
     parser.add_argument("--fifo_memory", action="store_true")
     parser.add_argument("--without_pretrain", action="store_true")
 
@@ -261,7 +263,7 @@ def get_args_parser():
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--resume", default="", help="resume from checkpoint")
     parser.add_argument("--load", default="", help="resume from checkpoint")
-    parser.add_argument("--load_sth", default="", help="resume from checkpoint")
+    parser.add_argument("--load_noun", default="", help="resume from checkpoint")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     parser.add_argument("--eval", action="store_true", help="Only run evaluation")
     parser.add_argument("--num_workers", default=10, type=int)
@@ -309,6 +311,8 @@ def main(args):
     random.seed(seed)
     torch.use_deterministic_algorithms(False)
 
+    ###############################################################################
+    #################################### model ####################################
     # Build the model
     model, criterion, cluster_criterion, weight_dict = build_model(args)
     model.to(device)
@@ -317,13 +321,13 @@ def main(args):
     if args.distillation:
         model_noun = deepcopy(model)
         model_noun.to(device)
-        if cluster_criterion:
-            cluster_criterion.to(device)
-            cluster_criterion.syn_memory()
     else:
         model_noun = None
         model_noun_ema = None
         model_noun_without_ddp = None
+    if cluster_criterion:
+        cluster_criterion.to(device)
+        cluster_criterion.syn_memory()
 
     # Get a copy of the model for exponential moving averaged version of the model
     model_ema = deepcopy(model) if args.ema else None
@@ -341,6 +345,8 @@ def main(args):
             model_noun = torch.nn.parallel.DistributedDataParallel(model_noun, device_ids=[args.gpu], find_unused_parameters=True)
             model_noun_without_ddp = model_noun.module
 
+    ###################################################################################
+    #################################### optimizer ####################################
     # Set up optimizers
     param_dicts = [
         {
@@ -385,6 +391,8 @@ def main(args):
     else:
         raise RuntimeError(f"Unsupported optimizer {args.optimizer}")
 
+    #################################################################################
+    #################################### dataset ####################################
     # Train dataset
     if len(args.combine_datasets) == 0 and not args.eval:
         raise RuntimeError("Please provide at least one training dataset")
@@ -441,28 +449,22 @@ def main(args):
         base_ds = get_coco_api_from_dataset(dset)
         val_tuples.append(Val_all(dataset_name=dset_name, dataloader=dataloader, base_ds=base_ds, evaluator_list=None))
 
-    if args.frozen_weights is not None:
-        if args.resume.startswith("https"):
-            checkpoint = torch.hub.load_state_dict_from_url(args.resume, map_location="cpu", check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location="cpu")
-        if "model_ema" in checkpoint and checkpoint["model_ema"] is not None:
-            model_without_ddp.detr.load_state_dict(checkpoint["model_ema"], strict=False)
-        else:
-            model_without_ddp.detr.load_state_dict(checkpoint["model"], strict=False)
-
-        if "criterion" in checkpoint:
-            criterion.load_state_dict(checkpoint["criterion"])
-
-        if args.ema:
-            model_ema = deepcopy(model_without_ddp)
-
+    ############################################################################################
+    #################################### load model weights ####################################
     # Used for loading weights from another model and starting a training from scratch. Especially useful if
     # loading into a model with different functionality.
     if args.load:
+        checkpoint_pronoun = torch.load(args.load, map_location="cpu")
+        if "model_ema" in checkpoint_pronoun:
+            model_without_ddp.load_state_dict(checkpoint_pronoun["model_ema"], strict=False)
+        else:
+            model_without_ddp.load_state_dict(checkpoint_pronoun["model"], strict=False)
+        if args.ema:
+            model_ema = deepcopy(model_without_ddp)
+
         if args.distillation:
-            print("loading from", args.load)
-            checkpoint = torch.load(args.load, map_location="cpu")
+            print("loading from", args.load_noun)
+            checkpoint = torch.load(args.load_noun, map_location="cpu")
             if "model_ema" in checkpoint:
                 model_noun_without_ddp.load_state_dict(checkpoint["model_ema"], strict=False)
             else:
@@ -470,18 +472,21 @@ def main(args):
             if args.ema:
                 model_noun_ema = deepcopy(model_noun_without_ddp)
 
-            # if "criterion" in checkpoint:
-            #     criterion.load_state_dict(checkpoint["criterion"])
+    if args.frozen_weights is not None:
+        if args.frozen_weights.startswith("https"):
+            checkpoint = torch.hub.load_state_dict_from_url(args.frozen_weights, map_location="cpu", check_hash=True)
+        else:
+            checkpoint = torch.load(args.frozen_weights, map_location="cpu")
+        if "model_ema" in checkpoint and checkpoint["model_ema"] is not None:
+            model_without_ddp.detr.load_state_dict(checkpoint["model_ema"], strict=False)
+        else:
+            model_without_ddp.detr.load_state_dict(checkpoint["model"], strict=False)
 
-            checkpoint_base = torch.load(args.load_sth, map_location="cpu")
-            if "model_ema" in checkpoint_base:
-                model_without_ddp.load_state_dict(checkpoint_base["model_ema"], strict=False)
-            else:
-                model_without_ddp.load_state_dict(checkpoint_base["model"], strict=False)
-            if args.ema:
-                model_ema = deepcopy(model_without_ddp)
-            if "cluster_criterion" in checkpoint_base and cluster_criterion:
-                cluster_criterion.load_state_dict(checkpoint_base["cluster_criterion"])
+        if args.ema:
+            model_ema = deepcopy(model_without_ddp)
+
+        if args.cluster and "cluster_criterion" in checkpoint:
+            cluster_criterion.load_state_dict(checkpoint["cluster_criterion"], strict=False)
 
     # Used for resuming training from the checkpoint of a model. Used when training times-out or is pre-empted.
     if args.resume:
@@ -494,9 +499,7 @@ def main(args):
             optimizer.load_state_dict(checkpoint["optimizer"])
             args.start_epoch = checkpoint["epoch"] + 1
 
-        if "criterion" in checkpoint:
-            criterion.load_state_dict(checkpoint["criterion"], strict=False)
-        if "cluster_criterion" in checkpoint and cluster_criterion:
+        if args.cluster and "cluster_criterion" in checkpoint:
             cluster_criterion.load_state_dict(checkpoint["cluster_criterion"], strict=False)
 
         if args.ema:
@@ -506,6 +509,8 @@ def main(args):
             else:
                 model_ema.load_state_dict(checkpoint["model_ema"], strict=False)
 
+    #######################################################################################
+    #################################### train or eval ####################################
     def build_evaluator_list(base_ds, dataset_name):
         """Helper function to build the list of evaluators for a given dataset"""
         evaluator_list = []
@@ -596,6 +601,7 @@ def main(args):
                 writer=writer,
                 model=model,
                 criterion=criterion,
+                cluster_criterion=cluster_criterion,
                 data_loader=data_loader_train,
                 weight_dict=weight_dict,
                 optimizer=optimizer,
@@ -620,7 +626,6 @@ def main(args):
                         "optimizer": optimizer.state_dict(),
                         "epoch": epoch,
                         "args": args,
-                        "criterion": criterion.state_dict(),
                         "cluster_criterion": cluster_criterion.state_dict() if args.cluster else None,
                     },
                     checkpoint_path,
@@ -664,25 +669,32 @@ def main(args):
             
         if epoch % args.eval_skip == 0:
             metric_bbox = np.mean([v[1] for k, v in test_stats.items() if "coco_eval_bbox" in k])    # mAP@0.5
-            if args.mask:
+            if args.masks:
                 metric_masks = np.mean([v[1] for k, v in test_stats.items() if "coco_eval_masks" in k])    # mAP@0.5
 
             if dist.is_main_process():
                 writer.add_scalar('map@0.5_bbox', metric_bbox, epoch)
-                writer.add_scalar('map@0.5_masks', metric_masks, epoch)
+                if args.masks:
+                    writer.add_scalar('map@0.5_masks', metric_masks, epoch)
 
                 for i in range(1,15):
-                    writer.add_scalar('%02d_ap@0.5_bbox' % i, test_stats['tdod_%d_coco_eval_bbox' % i][1], epoch)
-                if args.mask:
+                    try:
+                        writer.add_scalar('%02d_ap@0.5_bbox' % i, test_stats['tdod_%d_coco_eval_bbox' % i][1], epoch)
+                    except:
+                        pass
+                if args.masks:
                     for i in range(1,15):
-                        writer.add_scalar('%02d_ap@0.5_masks' % i, test_stats['tdod_%d_coco_eval_masks' % i][1], epoch)
+                        try:
+                            writer.add_scalar('%02d_ap@0.5_masks' % i, test_stats['tdod_%d_coco_eval_masks' % i][1], epoch)
+                        except:
+                            pass
 
             if args.output_dir:
                 save_best = False
-                if not args.mask and metric_bbox > best_metric:
+                if not args.masks and metric_bbox > best_metric:
                     save_best = True
                     best_metric = metric_bbox
-                elif args.mask and metric_masks > best_metric:
+                elif args.masks and metric_masks > best_metric:
                     save_best = True
                     best_metric = metric_masks
 
@@ -699,7 +711,6 @@ def main(args):
                                 "optimizer": optimizer.state_dict(),
                                 "epoch": epoch,
                                 "args": args,
-                                "criterion": criterion.state_dict(),
                                 "cluster_criterion": cluster_criterion.state_dict() if args.cluster else None,
                             },
                             checkpoint_path,

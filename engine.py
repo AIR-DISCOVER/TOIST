@@ -16,7 +16,7 @@ import util.dist as dist
 from datasets.coco_eval import TDODCocoEvaluator
 from util.metrics import MetricLogger, SmoothedValue
 from util.misc import targets_to
-from util.optim import my_adjust_learning_rate, update_ema
+from util.optim import adjust_learning_rate, dis_adjust_learning_rate, update_ema
 
 from IPython import embed
 
@@ -24,6 +24,7 @@ def train_one_epoch_plain(
     writer,
     model: torch.nn.Module,
     criterion: Optional[torch.nn.Module],
+    cluster_criterion: Optional[torch.nn.Module],
     weight_dict: Dict[str, float],
     data_loader: Iterable,
     optimizer: torch.optim.Optimizer,
@@ -36,6 +37,8 @@ def train_one_epoch_plain(
     model.train()
     if criterion is not None:
         criterion.train()
+    if cluster_criterion is not None:
+        cluster_criterion.train()
     metric_logger = MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", SmoothedValue(window_size=1, fmt="{value:.6f}"))
     metric_logger.add_meter("lr_backbone", SmoothedValue(window_size=1, fmt="{value:.6f}"))
@@ -51,18 +54,16 @@ def train_one_epoch_plain(
         samples = batch_dict["samples"].to(device)
         positive_map = batch_dict["positive_map"].to(device) if "positive_map" in batch_dict else None
         targets = batch_dict["targets"]
-        answers = {k: v.to(device) for k, v in batch_dict["answers"].items()} if "answers" in batch_dict else None
         captions = [t["caption"] for t in targets]
+        dataset_name_list = [t["dataset_name"] for t in targets]
 
         targets = targets_to(targets, device)
         # print(targets[0]['dataset_name'])
 
-        memory_cache = None
-        if args.masks:
-            outputs = model(samples, captions)
-        else:
-            memory_cache = model(samples, captions, encode_and_save=True)
-            outputs = model(samples, captions, encode_and_save=False, memory_cache=memory_cache)
+        memory_cache = model(samples, captions, encode_and_save=True)
+        if args.cluster:
+            memory_cache = cluster_criterion.infer_choice(memory_cache, dataset_name_list, captions)
+        outputs = model(samples, captions, encode_and_save=False, memory_cache=memory_cache)
 
         loss_dict = {}
         if criterion is not None:
@@ -171,7 +172,7 @@ def train_one_epoch_distillation(
 
         memory_cache = None
         if args.masks:
-            outputs = model(samples_sth, captions_sth)
+            outputs = model(samples_sth, captions_sth)  # not used
         else:
             memory_cache_noun = model_noun(samples_noun, captions_noun, encode_and_save=True)
             if args.cluster:
@@ -221,7 +222,7 @@ def train_one_epoch_distillation(
             torch.nn.utils.clip_grad_norm_(model_noun.parameters(), max_norm)
         optimizer.step()
 
-        my_adjust_learning_rate(
+        dis_adjust_learning_rate(
             optimizer,
             epoch,
             curr_step,
@@ -263,7 +264,8 @@ def evaluate(
     args,
 ):
     model.eval()
-    model_noun.eval()
+    if model_noun is not None:
+        model_noun.eval()
     if criterion is not None:
         criterion.eval()
     if cluster_criterion is not None:
@@ -277,21 +279,16 @@ def evaluate(
         samples = batch_dict["samples"].to(device)
         positive_map = batch_dict["positive_map"].to(device) if "positive_map" in batch_dict else None
         targets = batch_dict["targets"]
-        answers = {k: v.to(device) for k, v in batch_dict["answers"].items()} if "answers" in batch_dict else None
         captions = [t["caption"] for t in targets]
         dataset_name_list = [t["dataset_name"] for t in targets]
         noun_tokens_positive_list = [t["noun_tokens_positive"] for t in targets]
 
         targets = targets_to(targets, device)
 
-        memory_cache = None
-        if args.masks:
-            outputs = model(samples, captions)
-        else:
-            memory_cache = model(samples, captions, encode_and_save=True)
-            if args.distillation and args.cluster:
-                memory_cache = cluster_criterion.infer_choice(memory_cache, dataset_name_list, captions)
-            outputs = model(samples, captions, encode_and_save=False, memory_cache=memory_cache)
+        memory_cache = model(samples, captions, encode_and_save=True)
+        if args.cluster:
+            memory_cache = cluster_criterion.infer_choice(memory_cache, dataset_name_list, captions)
+        outputs = model(samples, captions, encode_and_save=False, memory_cache=memory_cache)
 
         loss_dict = {}
         if criterion is not None:

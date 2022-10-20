@@ -41,35 +41,15 @@ def get_args_parser():
 
     # Dataset specific
     parser.add_argument("--dataset_config", default=None, required=True)
-    parser.add_argument("--do_qa", action="store_true", help="Whether to do question answering")
-    parser.add_argument(
-        "--predict_final",
-        action="store_true",
-        help="If true, will predict if a given box is in the actual referred set. Useful for CLEVR-Ref+ only currently.",
-    )
+
     parser.add_argument("--no_detection", action="store_true", help="Whether to train the detector")
-    parser.add_argument(
-        "--split_qa_heads", action="store_true", help="Whether to use a separate head per question type in vqa"
-    )
+
     parser.add_argument(
         "--combine_datasets", nargs="+", help="List of datasets to combine for training", default=["flickr"]
     )
     parser.add_argument(
         "--combine_datasets_val", nargs="+", help="List of datasets to combine for eval", default=["flickr"]
     )
-
-    parser.add_argument("--coco_path", type=str, default="")
-    parser.add_argument("--vg_img_path", type=str, default="")
-    parser.add_argument("--vg_ann_path", type=str, default="")
-    parser.add_argument("--clevr_img_path", type=str, default="")
-    parser.add_argument("--clevr_ann_path", type=str, default="")
-    parser.add_argument("--phrasecut_ann_path", type=str, default="")
-    parser.add_argument(
-        "--phrasecut_orig_ann_path",
-        type=str,
-        default="",
-    )
-    parser.add_argument("--modulated_lvis_ann_path", type=str, default="")
 
     # Training hyper-parameters
     parser.add_argument("--lr", default=1e-4, type=float)
@@ -80,12 +60,6 @@ def get_args_parser():
     parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--epochs", default=40, type=int)
     parser.add_argument("--lr_drop", default=35, type=int)
-    parser.add_argument(
-        "--epoch_chunks",
-        default=-1,
-        type=int,
-        help="If greater than 0, will split the training set into chunks and validate/checkpoint after each chunk",
-    )
     parser.add_argument("--optimizer", default="adam", type=str)
     parser.add_argument("--clip_max_norm", default=0.1, type=float, help="gradient clipping max norm")
     parser.add_argument(
@@ -192,7 +166,6 @@ def get_args_parser():
         choices=("none", "smallconv", "v2"),
         help="Segmentation head to be used (if None, segmentation will not be trained)",
     )
-    parser.add_argument("--remove_difficult", action="store_true")
     parser.add_argument("--masks", action="store_true") # lpf: for segmentation mask
 
     # Loss
@@ -265,29 +238,11 @@ def get_args_parser():
     parser.add_argument("--contrastive_align_loss_coef", default=1, type=float)
 
     parser.add_argument(
-        "--no_contrastive_inbatch_loss",
-        dest="contrastive_inbatch_loss",
-        action="store_false",
-        help="Whether to add contrastive inbatch loss",
-    )
-    parser.add_argument("--contrastive_inbatch_coef", default=1, type=float)
-
-    parser.add_argument(
-        "--no_contrastive_outbatch_loss",
-        dest="contrastive_outbatch_loss",
-        action="store_false",
-        help="Whether to add contrastive outbatch loss",
-    )
-    parser.add_argument("--contrastive_outbatch_coef", default=1, type=float)
-
-    parser.add_argument(
-        "--no_nsthl2_loss",
-        dest="nsthl2_loss",
-        action="store_false",
+        "--nsthl2_loss",
+        action="store_true",
         help="Whether to add noun&sth text l2 loss",
     )
     parser.add_argument("--nsthl2_coef", default=1, type=float)
-
 
     # Run specific
 
@@ -607,24 +562,6 @@ def main(args):
 
     test_model = model_ema if model_ema is not None else model
 
-    imgid_to_show = {}
-    imgid_to_show[0]  = [632, 711, 810, 1599, 1626, 2477, 3580, 4175, 4495, 4916, 10705, 18224, 19432, 25453, 262162, 264155, 264855, 266117, 266601, 270706, 272870, 277197, 139684, 400567, 402368]
-    imgid_to_show[1]  = [711, 1993, 2477, 3580, 1008, 19589, 32888, 33815, 109482, 132121, 132336, 132540, 133146, 136355, 136920, 137578, 137861, 146965, 147545, 149197, 150874, 152000, 152609]
-    imgid_to_show[2]  = [987, 1270, 1340, 1347, 1573, 2431, 2685, 3425, 3934, 4011, 4125, 6471, 7276, 10114, 12576]
-    imgid_to_show[3]  = [544, 1668, 3845, 4125, 14629, 15883, 17534, 135356]
-    imgid_to_show[4]  = [1347, 5673, 6471, 6672, 7214, 19028, 21639, 83097, 113040, 138728, 156320]
-    imgid_to_show[5]  = [3093, 11209, 23448, 39770, 136250, 158708, 168544, 267683, 271259, 272440, 291845]
-    imgid_to_show[6]  = [5193, 22874, 161370]
-    imgid_to_show[7]  = [47807, 51403, 53315, 201120, 274917, 423618, 423919, 532747, 550707]
-    imgid_to_show[8]  = [11241, 11360, 12991, 35705, 39202, 39671, 72096, 92053, 142177, 143516, 170716]
-    imgid_to_show[9]  = [5673, 13148, 13383, 19544, 50981, 53465, 145318, 159151, 178028, 181796, 182334, 230987]
-    imgid_to_show[10] = [2759, 17714, 23840, 63939, 64909, 66632, 163528, 189752, 192904, 198796, 285047, 323291]
-    imgid_to_show[11] = [3192, 6189, 19358, 20177, 21639, 21993, 25202, 70865, 71171, 71929, 72811, 73278, 76384, 76518, 77402, 77681, 183456]
-    imgid_to_show[12] = [275749, 281809, 319696, 337188, 343248, 405004, 449708, 465822, 48575]
-    imgid_to_show[13] = [198397, 20965, 270474, 316404, 395462, 448263, 452964, 466561]
-
-
-
     for i, item in enumerate(val_tuples):
         postprocessors = build_postprocessors(args, item.dataset_name)
 
@@ -643,33 +580,6 @@ def main(args):
             targets = targets_to(targets, device)
 
             image_id = targets[0]['image_id'].item() # batch size need to be 1
-
-            if image_id != 202799:
-                continue
-
-            # if not (image_id in imgid_to_show[i]):
-            #     continue
-
-            # if len(targets[0]['boxes']) == 0:
-            #     continue
-            
-            # ##########
-            # cat_name = list(set(targets[0]['cat_name']))
-            # if 'skateboard' in cat_name:
-            #     cat_name.remove('skateboard')
-            # if 'snowboard' in cat_name:
-            #     cat_name.remove('snowboard')
-            # if 'tennis racket' in cat_name:
-            #     cat_name.remove('tennis racket')
-            # if 'surfboard' in cat_name:
-            #     cat_name.remove('surfboard')
-            # if 'skis' in cat_name:
-            #     cat_name.remove('skis')
-            # if 'baseball bat' in cat_name:
-            #     cat_name.remove('baseball bat')
-            # if len(cat_name) == 0:
-            #     continue
-            # ##########
 
             memory_cache = None
             if args.masks:
@@ -696,9 +606,9 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("DETR training and evaluation script", parents=[get_args_parser()])
+    parser = argparse.ArgumentParser("TOIST training and evaluation.", parents=[get_args_parser()])
     args = parser.parse_args()
     if not args.output_dir:
-        args.output_dir = '/data/hdd01/pengfeili/tdod/mdetr/logs/test'
+        args.output_dir = 'logs/test'
 
     main(args)

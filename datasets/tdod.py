@@ -37,7 +37,6 @@ TasksAbbreviation={
     14: 'pound carpet with ', 
 }
 
-
 class TdodDetection(torchvision.datasets.CocoDetection):
     def __init__(self, args, img_folder, ann_file, image_set, transforms, return_masks, return_tokens, tokenizer, is_train=False):
         self.args = args
@@ -64,15 +63,30 @@ class TdodDetection(torchvision.datasets.CocoDetection):
         task_caption = TasksAbbreviation[int(dataset_name.split('_')[1])]
 
         if not self.args.distillation: # plain TOIST
-            # task+'something'
-            caption_sth = task_caption + 'something'
-            target_sth = {"image_id": image_id, "annotations": target_ori, "caption": caption_sth}
-            target_sth["dataset_name"] = dataset_name
-            img_sth, target_sth = self.prepare(img_ori, target_sth, gt_obj=0)
-            if self._transforms is not None:
-                img_sth, target_sth = self._transforms(img_sth, target_sth)
+            if self.args.verb_noun_input:
+                # task + gt object name
+                obj_caption = [task_caption+self.catid2name[str(item['COCO_category_id'])] for item in target_ori if item['category_id']==1]
+                obj_caption = list(set(obj_caption))
+                caption = ' '.join(obj_caption)
 
-            return [img_sth], [target_sth]
+                target_obj = {"image_id": image_id, "annotations": target_ori, "caption": caption}
+                target_obj["dataset_name"] = dataset_name
+                img_obj = copy.deepcopy(img_ori)
+                img_obj, target_obj = self.prepare(img_obj, target_obj, gt_obj=1)
+                if self._transforms is not None:
+                    img_obj, target_obj = self._transforms(img_obj, target_obj)
+
+                return [img_obj], [target_obj]
+            else:
+                # task+'something'
+                caption_sth = task_caption + 'something'
+                target_sth = {"image_id": image_id, "annotations": target_ori, "caption": caption_sth}
+                target_sth["dataset_name"] = dataset_name
+                img_sth, target_sth = self.prepare(img_ori, target_sth, gt_obj=0)
+                if self._transforms is not None:
+                    img_sth, target_sth = self._transforms(img_sth, target_sth)
+
+                return [img_sth], [target_sth]
         else: # noun-pronoun distillation
             if self.image_set == 'train':
                 # task + gt object name

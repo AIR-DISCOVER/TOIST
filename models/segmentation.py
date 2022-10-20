@@ -37,57 +37,135 @@ class DETRsegm(nn.Module):
         else:
             self.mask_head = maskHead(mask_dim, [1024, 512, 256], hidden_dim)
 
-    def forward(self, samples: NestedTensor, captions):
+    def forward(self, samples: NestedTensor, captions, encode_and_save=True, memory_cache=None):
+        """The forward expects a NestedTensor, which consists of:
+           - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
+           - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
+
+        It returns a dict with the following elements:
+           - "pred_logits": the classification logits (including no-object) for all queries.
+                            Shape= [batch_size x num_queries x (num_classes + 1)]
+           - "pred_boxes": The normalized boxes coordinates for all queries, represented as
+                           (center_x, center_y, height, width). These values are normalized in [0, 1],
+                           relative to the size of each individual image (disregarding possible padding).
+                           See PostProcess for information on how to retrieve the unnormalized bounding box.
+           - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
+                            dictionnaries containing the two above keys for each decoder layer.
+        """
         if not isinstance(samples, NestedTensor):
             samples = NestedTensor.from_tensor_list(samples)
-        features, pos = self.detr.backbone(samples)
 
-        bs = features[-1].tensors.shape[0]
+        if encode_and_save:
+            assert memory_cache is None
+            features, pos = self.detr.backbone(samples)
+            src, mask = features[-1].decompose()
+            query_embed = self.detr.query_embed.weight
+            src_proj = self.detr.input_proj(src)
+            memory_cache = self.detr.transformer(
+                src_proj,
+                mask,
+                query_embed,
+                pos[-1],
+                captions,
+                encode_and_save=True,
+                text_memory=None,
+                img_memory=None,
+                text_attention_mask=None,
+            )
 
-        src, mask = features[-1].decompose()
-        query_embed = self.detr.query_embed.weight
-        src_proj = self.detr.input_proj(src)
-        memory_cache = self.detr.transformer(
-            src_proj,
-            mask,
-            query_embed,
-            pos[-1],
-            captions,
-            encode_and_save=True,
-            text_memory=None,
-            img_memory=None,
-            text_attention_mask=None,
-        )
-        hs = self.detr.transformer(
-            mask=memory_cache["mask"],
-            query_embed=memory_cache["query_embed"],
-            pos_embed=memory_cache["pos_embed"],
-            encode_and_save=False,
-            text_memory=memory_cache["text_memory_resized"],
-            img_memory=memory_cache["img_memory"],
-            text_attention_mask=memory_cache["text_attention_mask"],
-        )
+            ### mask
+            memory_cache["features_4_mask"] = features
+            memory_cache["src_proj_4_mask"] = src_proj
 
-        memory = memory_cache["img_memory"][: -len(memory_cache["text_memory"])].permute(1, 2, 0).view_as(src_proj) # lpf: bs,hdim,patch_h,patch_w
-        # hs, memory = self.detr.transformer(src_proj, mask, self.detr.query_embed.weight, pos[-1])
+            return memory_cache
 
-        outputs_class = self.detr.class_embed(hs)
-        outputs_coord = self.detr.bbox_embed(hs).sigmoid()
-        out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
-        if self.detr.aux_loss:
-            out["aux_outputs"] = [
-                {"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
-            ]
+        else:
+            assert memory_cache is not None
 
-        # FIXME h_boxes takes the last one computed, keep this in mind
-        bbox_mask = self.bbox_attention(hs[-1], memory, mask=mask)
+            if self.detr.args.cluster:
+                hs = self.detr.transformer(
+                    mask=memory_cache["mask"],
+                    query_embed=memory_cache["query_embed"],
+                    pos_embed=memory_cache["pos_embed"],
+                    encode_and_save=False,
+                    text_memory=memory_cache["text_memory_resized"],
+                    img_memory=memory_cache["img_memory_mod"],  # if args.cluster
+                    text_attention_mask=memory_cache["text_attention_mask"],
+                )
+            else:
+                hs = self.detr.transformer(
+                    mask=memory_cache["mask"],
+                    query_embed=memory_cache["query_embed"],
+                    pos_embed=memory_cache["pos_embed"],
+                    encode_and_save=False,
+                    text_memory=memory_cache["text_memory_resized"],
+                    img_memory=memory_cache["img_memory"],
+                    text_attention_mask=memory_cache["text_attention_mask"],
+                )
 
-        seg_masks = self.mask_head(src_proj, bbox_mask, [features[2].tensors, features[1].tensors, features[0].tensors])
-        outputs_seg_masks = seg_masks.view(bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1])
+            out = {}
 
-        out["pred_masks"] = outputs_seg_masks
-        return out
+            outputs_class = self.detr.class_embed(hs)
+            outputs_coord = self.detr.bbox_embed(hs).sigmoid()
+            out.update(
+                {
+                    "pred_logits": outputs_class[-1],
+                    "pred_boxes": outputs_coord[-1],
+                }
+            )
+            outputs_isfinal = None
+            proj_queries, proj_tokens = None, None
+            if self.detr.contrastive_align_loss:
+                proj_queries = F.normalize(self.detr.contrastive_align_projection_image(hs), p=2, dim=-1)
+                proj_tokens = F.normalize(
+                    self.detr.contrastive_align_projection_text(memory_cache["text_memory"]).transpose(0, 1), p=2, dim=-1
+                )
+                out.update(
+                    {
+                        "proj_queries": proj_queries[-1],
+                        "proj_tokens": proj_tokens,
+                        "tokenized": memory_cache["tokenized"],
+                    }
+                )
+            if self.detr.aux_loss:
+                if self.detr.contrastive_align_loss:
+                    assert proj_tokens is not None and proj_queries is not None
+                    out["aux_outputs"] = [
+                        {
+                            "pred_logits": a,
+                            "pred_boxes": b,
+                            "proj_queries": c,
+                            "proj_tokens": proj_tokens,
+                            "tokenized": memory_cache["tokenized"],
+                        }
+                        for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], proj_queries[:-1])
+                    ]
+                else:
+                    out["aux_outputs"] = [
+                        {
+                            "pred_logits": a,
+                            "pred_boxes": b,
+                        }
+                        for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+                    ]
+                if outputs_isfinal is not None:
+                    assert len(outputs_isfinal[:-1]) == len(out["aux_outputs"])
+                    for i in range(len(outputs_isfinal[:-1])):
+                        out["aux_outputs"][i]["pred_isfinal"] = outputs_isfinal[i]
 
+            # mask
+            features = memory_cache["features_4_mask"]
+            src, mask = features[-1].decompose()
+            src_proj = memory_cache["src_proj_4_mask"]
+            bs = features[-1].tensors.shape[0]
+            memory = memory_cache["img_memory"][: -len(memory_cache["text_memory"])].permute(1, 2, 0).view_as(src_proj) # lpf: bs,hdim,patch_h,patch_w
+            bbox_mask = self.bbox_attention(hs[-1], memory, mask=mask)
+
+            seg_masks = self.mask_head(src_proj, bbox_mask, [features[2].tensors, features[1].tensors, features[0].tensors])
+            outputs_seg_masks = seg_masks.view(bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1])
+
+            out["pred_masks"] = outputs_seg_masks
+            return out
 
 class MaskHeadSmallConv(nn.Module):
     """
