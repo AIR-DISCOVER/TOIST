@@ -283,7 +283,7 @@ We provide our pretrained models on [Google Drive](https://drive.google.com/driv
   <tr>
     <td class="tg-c3ow">5</td>
     <td class="tg-0pky">noun-pronoun distillation</td>
-    <td class="tg-y02l"><a href="" target="_blank" rel="noopener noreferrer">Google Drive</a></td>
+    <td class="tg-y02l"><a href="https://drive.google.com/file/d/1OdIbiqF5E6fxMYVagQBNnIiFj1epT-VA/view?usp=sharing" target="_blank" rel="noopener noreferrer">Google Drive</a></td>
   </tr>
   <tr>
     <td class="tg-c3ow">Figure3 (a)</td>
