@@ -17,7 +17,12 @@ Current referring expression comprehension algorithms can effectively detect or 
 
 If you find our code or paper useful, please consider citing:
 ```bibtex
-coming soon...
+@article{li2022toist,
+  title={TOIST: Task Oriented Instance Segmentation Transformer with Noun-Pronoun Distillation},
+  author={Li, Pengfei and Tian, Beiwen and Shi, Yongliang and Chen, Xiaoxue and Zhao, Hao and Zhou, Guyue and Zhang, Ya-Qin},
+  journal={arXiv preprint arXiv:2210.10775},
+  year={2022}
+}
 ```
 
 This repository is a PyTorch implementation.
