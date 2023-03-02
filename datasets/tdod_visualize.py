@@ -37,8 +37,8 @@ TasksAbbreviation={
     14: 'pound carpet with something',
 }
 
-with open('/DATA1/lpf/tdod/mdetr/id2name.json', 'r') as id2name_f:
-    catid2name = json.load(id2name_f)
+# with open('/DATA1/lpf/tdod/mdetr/id2name.json', 'r') as id2name_f:
+#     catid2name = json.load(id2name_f)
 
 
 class TdodDetection(torchvision.datasets.CocoDetection):
