@@ -494,7 +494,20 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(args.resume, map_location="cpu", check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location="cpu")
-        model_without_ddp.load_state_dict(checkpoint["model"], strict=False)
+        
+        # If the ckpt has segmentation part but resume for detection:
+        if not args.masks and 'mask_head.adapter3.bias' in checkpoint['model'].keys():
+            new_state_dict = {}
+            for k,v in checkpoint['model'].items():
+                if k[:5] == 'detr.':
+                    name = k[5:]
+                    new_state_dict[name] = v
+            model_without_ddp.load_state_dict(new_state_dict, strict=False)
+        else:
+            model_without_ddp.load_state_dict(checkpoint["model"], strict=False)
+        
+        # The ckpt provided in github repo corresponds to the model with segmentation part, 
+        # which is not suitable for resuming optimizer. 
         if not args.eval and "optimizer" in checkpoint and "epoch" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
             args.start_epoch = checkpoint["epoch"] + 1
@@ -507,7 +520,15 @@ def main(args):
                 print("WARNING: ema model not found in checkpoint, resetting to current model")
                 model_ema = deepcopy(model_without_ddp)
             else:
-                model_ema.load_state_dict(checkpoint["model_ema"], strict=False)
+                if not args.masks and 'mask_head.adapter3.bias' in checkpoint['model_ema'].keys():
+                    new_state_dict = {}
+                    for k,v in checkpoint['model_ema'].items():
+                        if k[:5] == 'detr.':
+                            name = k[5:]
+                            new_state_dict[name] = v
+                    model_ema.load_state_dict(new_state_dict, strict=False)
+                else:
+                    model_ema.load_state_dict(checkpoint["model_ema"], strict=False)
 
     #######################################################################################
     #################################### train or eval ####################################
